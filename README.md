@@ -22,16 +22,16 @@ The client wires up the following `HttpClient` handler chain (outermost → inne
 ```
 HttpClient
   └─ [LoggingHandler "0-outer"]
-       └─ (optional) PollyCacheKeyHandler           ← sets Context.OperationKey
-            └─ Polly.CacheAsync<HttpResponseMessage>
-                 └─ [LoggingHandler "1-after-cache"]
-                      └─ Polly.WaitAndRetryAsync
-                           └─ [LoggingHandler "2-after-retry"]
-                                └─ HttpClientHandler (socket)
+       └─ ResponseCachingHandler             ← short-circuits on cache HIT
+            └─ [LoggingHandler "1-after-cache"]
+                 └─ Polly.WaitAndRetryAsync
+                      └─ [LoggingHandler "2-after-retry"]
+                           └─ HttpClientHandler (socket)
 ```
 
 Each `LoggingHandler` logs a unique tag along with the request URI, attempt
-number, elapsed time, and response status. Combined with Aspire's OpenTelemetry
+number, elapsed time, and response status. `ResponseCachingHandler` logs every
+cache HIT/MISS with the cache key. Combined with Aspire's OpenTelemetry
 dashboard, you see the entire pipeline for every Refit method invocation.
 
 ## Run
@@ -69,38 +69,35 @@ the pipeline-handler log lines to see how each one flows:
 
 | # | Scenario | What you should see |
 | --- | --- | --- |
-| 1 | First call to `GetByGenevaLogAccount` | All three layers (`0-outer` → `1-after-cache` → `2-after-retry`) fire, plus a real HTTP call. ~20 ms. |
-| 2 | Second call with **same** args | With cache effectively disabled (default), all three layers fire again — see footnote below. |
-| 3 | Second call with **different** args | All three layers fire — different cache key (if caching worked). |
-| 4 | Valid AppInsights ARM ID | 200 OK from the server. |
-| 5 | Invalid AppInsights ARM ID | Server returns 400. Polly's retry policy **does not** retry — 4xx are not transient errors. Refit throws `ApiException`. |
+| 1 | First call to `GetByGenevaLogAccount` | `cache MISS` → all three layers (`0-outer` → `1-after-cache` → `2-after-retry`) fire, plus a real HTTP call. ~20 ms. |
+| 2 | Second call with **same** args | `cache HIT` → only `[0-outer]` fires, request short-circuits at `ResponseCachingHandler`. 0 ms. |
+| 3 | Second call with **different** args | `cache MISS` (different cache key) → all three layers fire. |
+| 4 | Valid AppInsights ARM ID | `cache MISS` → 200 OK from the server. |
+| 5 | Invalid AppInsights ARM ID | Server returns 400. Polly's retry policy **does not** retry — 4xx are not transient errors. The 400 is **not** cached (only 2xx are). Refit throws `ApiException`. |
 
-## ⚠️ Lessons hidden in the original `TraceControlPlane.Client`
+## ⚠️ Two latent bugs in the original `TraceControlPlane.Client`'s cache wiring
 
-While building this playground I discovered the cache wiring in the real
-`TraceControlPlane.Client` is **a latent no-op**, and "fixing" it the obvious
-way exposes a second pitfall. The flag `EnableCacheKeyFix` and
-`PollyCacheKeyHandler` exist to demonstrate both:
+While building this playground I discovered the `Policy.CacheAsync` registration
+in the real `TraceControlPlane.Client` has two problems that compound each
+other. This playground replaces that wiring with `ResponseCachingHandler`,
+which avoids both. The bugs are worth understanding:
 
 ### 1. Polly `CacheAsync` needs `Context.OperationKey`
 
 `Microsoft.Extensions.Http.Polly`'s `PolicyHttpMessageHandler` creates a fresh
 `Polly.Context` per request **but never populates `OperationKey`**. Polly's
 cache policy uses `Context.OperationKey` as the cache key — when it is empty,
-every call is treated as unique and **nothing is ever cached**.
-
-→ With `EnableCacheKeyFix = false` (default, matching the real repo), scenario
-2 in the demo still issues a real HTTP request, even though there is a "cache".
-
-→ Fix: add a tiny `DelegatingHandler` that sits **before** the cache policy
-and sets `Context.OperationKey` to the request method + URI. That is what
-`PollyCacheKeyHandler` does.
+every call is treated as unique and **nothing is ever cached**. The real
+`TraceControlPlane.Client` ships with this issue; its cache is silently a
+no-op.
 
 ### 2. Caching `HttpResponseMessage` directly is unsafe
 
-Set `EnableCacheKeyFix = true` and rerun — scenario 2 now **does** short-circuit
-at the cache layer (you'll see only `[0-outer]` fire and zero ms latency).
-But you also get:
+Even if you fix #1 (by inserting a handler that sets `OperationKey` before the
+cache policy), `Polly.CacheAsync<HttpResponseMessage>` caches the **same
+instance** of `HttpResponseMessage`. Refit reads & disposes its `Content` on
+the first call. On the second call, the cache returns the now-disposed
+instance and Refit throws:
 
 ```
 Refit.ApiException: An error occured deserializing the response.
@@ -108,16 +105,14 @@ Refit.ApiException: An error occured deserializing the response.
       Object name: 'HttpConnectionResponseContent'.
 ```
 
-Why? `Polly.CacheAsync<HttpResponseMessage>` caches the **same instance** of
-`HttpResponseMessage`. Refit reads & disposes its `Content` on the first call.
-On the cache hit, Refit gets the already-disposed instance and crashes.
+### The fix in this repo
 
-→ Real fix: cache **deserialized DTOs**, not `HttpResponseMessage`. Either:
-  - put the cache at the Refit-interface level (decorate `ITracingConfigurationsApi`), or
-  - cache a `(StatusCode, Headers, Body bytes)` snapshot and reconstruct a fresh
-    `HttpResponseMessage` on each cache hit.
+`ResponseCachingHandler` sidesteps both problems by treating the cache as a
+plain HTTP-layer concern and caching a value-typed snapshot
+`(StatusCode, Headers, Body bytes, ReasonPhrase)` keyed by
+`Method + URI`. On each cache hit it constructs a **fresh** `HttpResponseMessage`
+from the snapshot, so Refit safely owns and disposes its own copy. It also
+single-flights concurrent misses for the same key onto one upstream call.
 
-The current code in `TraceControlPlane.Client` ships with the first problem
-unresolved — caching is silently disabled. If the no-op cache is intentional,
-removing the `Policy.CacheAsync` registration would make that explicit and
-remove ~10 lines of misleading code.
+Only successful (2xx) GET responses are cached — 4xx/5xx and non-GET methods
+go straight through.

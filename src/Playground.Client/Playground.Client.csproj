@@ -4,7 +4,6 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
     <PackageReference Include="Microsoft.Extensions.Http.Polly" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-    <PackageReference Include="Polly.Caching.Memory" />
     <PackageReference Include="Refit.HttpClientFactory" />
   </ItemGroup>
 

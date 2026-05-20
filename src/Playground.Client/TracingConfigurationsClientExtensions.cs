@@ -3,7 +3,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Polly;
-using Polly.Caching.Memory;
 using Polly.Extensions.Http;
 using Playground.Contracts;
 using Refit;
@@ -11,18 +10,24 @@ using Refit;
 namespace Playground.Client;
 
 /// <summary>
-/// Registers the Refit client + Polly cache & retry policies, mirroring
-/// <c>TraceControlPlaneClientExtensions.AddTraceControlPlaneClient</c>.
+/// Registers the Refit client with response caching + Polly retry, mirroring the spirit of
+/// <c>TraceControlPlaneClientExtensions.AddTraceControlPlaneClient</c> but with a correct cache
+/// implementation (see <see cref="ResponseCachingHandler"/> for why the original Polly cache
+/// wiring was a no-op).
 ///
+/// <para>
 /// Resulting <c>HttpClient</c> handler chain (outermost first):
+/// </para>
 ///
-///   <c>HttpClient</c>
-///     → <c>PipelineLoggingHandler("0-outer")</c>
-///       → Polly cache policy             (returns cached response without going further)
-///         → <c>PipelineLoggingHandler("1-after-cache")</c>
-///           → Polly retry policy         (re-enters this branch on each retry)
-///             → <c>PipelineLoggingHandler("2-after-retry")</c>
-///               → primary <c>HttpClientHandler</c> (socket)
+/// <code>
+/// HttpClient
+///   → PipelineLoggingHandler("0-outer")
+///     → ResponseCachingHandler                    (short-circuits on cache HIT)
+///       → PipelineLoggingHandler("1-after-cache")
+///         → Polly retry policy                    (re-enters this branch on each retry)
+///           → PipelineLoggingHandler("2-after-retry")
+///             → primary HttpClientHandler (socket)
+/// </code>
 /// </summary>
 public static class TracingConfigurationsClientExtensions
 {
@@ -64,7 +69,7 @@ public static class TracingConfigurationsClientExtensions
                         $"due to {(outcome.Exception?.GetType().Name ?? outcome.Result?.StatusCode.ToString())}");
                 });
 
-        services
+        var clientBuilder = services
             .AddRefitClient<ITracingConfigurationsApi>()
             .ConfigureHttpClient(httpClient =>
             {
@@ -73,17 +78,17 @@ public static class TracingConfigurationsClientExtensions
             // Order matters: AddHttpMessageHandler / AddPolicyHandler are *appended* to the
             // chain, so the first registration sits outermost (closest to HttpClient).
             .AddHttpMessageHandler(sp => new PipelineLoggingHandler(
-                sp.GetRequiredService<ILogger<PipelineLoggingHandler>>(), "0-outer"))
-            // OPTIONAL: insert PollyCacheKeyHandler *before* the cache policy so the
-            // Context.OperationKey is set when the policy looks for a cache hit.
-            // Without this, Polly's CacheAsync never hits — see PollyCacheKeyHandler XML docs.
-            .AddHttpMessageHandlerWhen(options.EnableCacheKeyFix, () => new PollyCacheKeyHandler())
-            .AddPolicyHandler((sp, _) =>
-            {
-                var memoryCache = sp.GetRequiredService<IMemoryCache>();
-                var cacheProvider = new MemoryCacheProvider(memoryCache);
-                return Policy.CacheAsync<HttpResponseMessage>(cacheProvider, options.CacheTtl);
-            })
+                sp.GetRequiredService<ILogger<PipelineLoggingHandler>>(), "0-outer"));
+
+        if (options.CacheTtl > TimeSpan.Zero)
+        {
+            clientBuilder.AddHttpMessageHandler(sp => new ResponseCachingHandler(
+                sp.GetRequiredService<IMemoryCache>(),
+                options.CacheTtl,
+                sp.GetRequiredService<ILogger<ResponseCachingHandler>>()));
+        }
+
+        clientBuilder
             .AddHttpMessageHandler(sp => new PipelineLoggingHandler(
                 sp.GetRequiredService<ILogger<PipelineLoggingHandler>>(), "1-after-cache"))
             .AddPolicyHandler(retryPolicy)
@@ -92,8 +97,4 @@ public static class TracingConfigurationsClientExtensions
 
         return services;
     }
-
-    private static IHttpClientBuilder AddHttpMessageHandlerWhen(
-        this IHttpClientBuilder builder, bool condition, Func<DelegatingHandler> factory)
-        => condition ? builder.AddHttpMessageHandler(factory) : builder;
 }
