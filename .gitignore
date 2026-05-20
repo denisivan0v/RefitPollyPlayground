@@ -1,0 +1,22 @@
+## Build output
+bin/
+obj/
+out/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+## NuGet
+*.nupkg
+.nuget/
+project.lock.json
+
+## Aspire / Aspire dashboard
+**/aspire-temp/
+*.log
+
+## OS
+.DS_Store
+Thumbs.db

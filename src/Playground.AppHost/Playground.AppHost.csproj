@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>refit-polly-playground-apphost</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Playground.Server\Playground.Server.csproj" />
+    <ProjectReference Include="..\Playground.ConsoleClient\Playground.ConsoleClient.csproj" />
+  </ItemGroup>
+</Project>
