@@ -5,12 +5,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Aspire 8.x — latest version that targets net8.0 -->
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="8.2.2" />
-    <PackageVersion Include="Aspire.Hosting" Version="8.2.2" />
-    <!-- Platform-specific binaries normally provided by the Aspire workload -->
-    <PackageVersion Include="Aspire.Dashboard.Sdk.osx-arm64" Version="8.2.2" />
-    <PackageVersion Include="Aspire.Hosting.Orchestration.osx-arm64" Version="8.2.2" />
+    <!-- Aspire 9.x still supports net8.0 and brings the Aspire.AppHost.Sdk which
+         pulls in the platform-specific dashboard/DCP packages automatically, so
+         we don't need the Aspire workload installed. -->
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.5.2" />
+    <PackageVersion Include="Aspire.Hosting" Version="9.5.2" />
 
     <!-- ASP.NET / Extensions (net8.0) -->
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
@@ -21,7 +20,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="8.0.1" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="8.2.2" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="9.5.2" />
     <PackageVersion Include="Microsoft.Extensions.Resilience" Version="8.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="8.10.0" />
 
