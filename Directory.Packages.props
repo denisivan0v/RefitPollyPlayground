@@ -8,6 +8,9 @@
     <!-- Aspire 8.x — latest version that targets net8.0 -->
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="8.2.2" />
     <PackageVersion Include="Aspire.Hosting" Version="8.2.2" />
+    <!-- Platform-specific binaries normally provided by the Aspire workload -->
+    <PackageVersion Include="Aspire.Dashboard.Sdk.osx-arm64" Version="8.2.2" />
+    <PackageVersion Include="Aspire.Hosting.Orchestration.osx-arm64" Version="8.2.2" />
 
     <!-- ASP.NET / Extensions (net8.0) -->
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />

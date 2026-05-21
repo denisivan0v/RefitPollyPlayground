@@ -83,18 +83,27 @@ public sealed class ResponseCachingHandler : DelegatingHandler
             _logger.LogInformation("[cache] MISS key={CacheKey}", cacheKey);
             var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
-            if (response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
-                var snapshot = await ResponseSnapshot.FromAsync(response, cancellationToken).ConfigureAwait(false);
+                // Non-success — return as-is; the caller (Refit) owns disposal.
+                return response;
+            }
+
+            // Success path: we own this response. Always dispose it after snapshotting,
+            // even if snapshotting itself fails (e.g., cancellation mid-body-read,
+            // network error while buffering, or OOM in ReadAsByteArrayAsync) — otherwise
+            // the underlying HTTP connection/stream leaks.
+            using (response)
+            {
+                var snapshot = await ResponseSnapshot
+                    .FromAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
                 _cache.Set(cacheKey, snapshot, _ttl);
 
                 // Return a fresh response built from the snapshot so the original
-                // response (now buffered) and the cached snapshot are independent.
-                response.Dispose();
+                // response (now disposed) and the cached snapshot are independent.
                 return snapshot.ToHttpResponseMessage(request);
             }
-
-            return response;
         }
         finally
         {

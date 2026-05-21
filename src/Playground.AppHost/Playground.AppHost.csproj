@@ -6,6 +6,25 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
+    <!-- These two packages are normally pulled in by the Aspire workload.
+         We reference them explicitly so the AppHost can run without
+         requiring `sudo dotnet workload install aspire`. -->
+    <PackageReference Include="Aspire.Dashboard.Sdk.osx-arm64" />
+    <PackageReference Include="Aspire.Hosting.Orchestration.osx-arm64" />
+  </ItemGroup>
+
+  <!--
+    The Aspire workload normally adds these AssemblyMetadata attributes during
+    build by importing extra .targets that consume the AspireDashboardPath /
+    DcpCliPath MSBuild properties set by the platform-specific packages above.
+    We don't have the workload, so we add them manually. Aspire.Hosting reads
+    them at runtime via [assembly: AssemblyMetadata(...)] reflection.
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="DashboardPath" Value="$(AspireDashboardPath)" Condition=" '$(AspireDashboardPath)' != '' " />
+    <AssemblyMetadata Include="DcpCliPath" Value="$(DcpCliPath)" Condition=" '$(DcpCliPath)' != '' " />
+    <AssemblyMetadata Include="DcpExtensionsPath" Value="$(DcpExtensionsDir)" Condition=" '$(DcpExtensionsDir)' != '' " />
+    <AssemblyMetadata Include="DcpBinPath" Value="$(DcpBinDir)" Condition=" '$(DcpBinDir)' != '' " />
   </ItemGroup>
 
   <ItemGroup>
